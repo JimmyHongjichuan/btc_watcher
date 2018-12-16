@@ -1,7 +1,9 @@
 package coinmanager
 
 import (
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/rpcclient"
+	"github.com/btcsuite/btcutil"
 	log "github.com/inconshreveable/log15"
 	"github.com/spf13/viper"
 )
@@ -12,6 +14,17 @@ type BitCoinClient struct {
 	confirmNum uint64
 	coinType   string
 }
+
+//GetRawMempool 从全节点内存中获取内存中的交易数据
+func (b *BitCoinClient) GetRawMempool() ([]*chainhash.Hash, error) {
+	result, err := b.rpcClient.GetRawMempool()
+	if err != nil {
+		log.Warn("GetRawMempool FAILED:", "err", err.Error())
+		return nil, err
+	}
+	return result, err
+}
+
 
 //NewBitCoinClient 创建一个bitcoin操作客户端
 func NewBitCoinClient(coinType string) (*BitCoinClient, error) {
@@ -43,4 +56,56 @@ func NewBitCoinClient(coinType string) (*BitCoinClient, error) {
 	bc.rpcClient = client
 
 	return bc, err
+}
+
+//GetRawTransaction 根据txhash从区块链上查询交易数据
+func (b *BitCoinClient) GetRawTransaction(txHash string) (*btcutil.Tx, error) {
+	hash, err := chainhash.NewHashFromStr(txHash)
+	if err != nil {
+		log.Warn("NEW_HASH_FAILED:", "err", err.Error(), "hash", txHash)
+		return nil, err
+	}
+
+	txRaw, err := b.rpcClient.GetRawTransaction(hash)
+	if err != nil {
+		log.Warn("GetRawTransaction FAILED:", "err", err.Error(), "hash", txHash)
+		return nil, err
+	}
+	return txRaw, nil
+}
+
+//GetBlockCount 获取当前区块链高度
+func (b *BitCoinClient) GetBlockCount() int64 {
+	blockHeight, err := b.rpcClient.GetBlockCount()
+	if err != nil {
+		log.Warn("GET_BLOCK_COUNT FAIL:", "err", err.Error())
+		return -1
+	}
+	return blockHeight
+}
+
+//GetBlockInfoByHeight 根据区块高度获取区块信息
+func (b *BitCoinClient) GetBlockInfoByHeight(height int64) *BlockData {
+	blockHash, err := b.rpcClient.GetBlockHash(height)
+	if err != nil {
+		log.Warn("GET_BLOCK_HASH FAIL:", "err", err.Error())
+		return nil
+	}
+
+	blockVerbose, err := b.rpcClient.GetBlockVerbose(blockHash)
+	if err != nil {
+		log.Warn("GET_BLOCK_VERBOSE FAIL:", "err", err.Error())
+		return nil
+	}
+
+	blockEntity, err := b.rpcClient.GetBlock(blockHash)
+	if err != nil {
+		log.Warn("GET_BLOCK FAIL:", "err", err.Error())
+		return nil
+	}
+
+	return &BlockData{
+		BlockInfo: blockVerbose,
+		MsgBolck:  blockEntity,
+	}
 }

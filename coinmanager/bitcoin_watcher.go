@@ -4,8 +4,11 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	log "github.com/inconshreveable/log15"
 	"github.com/spf13/viper"
+	"time"
 )
 
+var defaultInterval = 1
+var freshBlockLength = 6
 //BitCoinWatcher BTC/BCH监听类
 type BitCoinWatcher struct {
 	scanConfirmHeight     int64
@@ -54,3 +57,122 @@ func NewBitCoinWatcher(coinType string, confirmHeight int64) (*BitCoinWatcher, e
 
 	return &bw, nil
 }
+
+//WatchNewTxFromNodeMempool 启动监听全节点内存中的新交易
+func (bw *BitCoinWatcher) WatchNewTxFromNodeMempool() {
+
+	go func() {
+		for {
+			txList, err := bw.bitcoinClient.GetRawMempool()
+			if err != nil {
+				log.Warn("GetRawMempool failed", "err", err.Error())
+			}
+			if len(txList) > 0 {
+				log.Debug("mempool tx len", "len", len(txList))
+				tempMap := make(map[string]int)
+
+				for _, txID := range txList {
+					tempMap[txID.String()] = 0
+
+					_, ok := bw.mempoolTxs[txID.String()]
+					if !ok {
+						txEntity, err := bw.bitcoinClient.GetRawTransaction(txID.String())
+						if err == nil {
+							bw.newTxChan <- txEntity.MsgTx()
+						}
+					}
+				}
+
+				bw.mempoolTxs = tempMap
+			}
+
+			time.Sleep(time.Duration(defaultInterval) * time.Second)
+		}
+	}()
+
+}
+
+//WatchNewBlock 启动监听新区块
+func (bw *BitCoinWatcher) WatchNewBlock() {
+	go func() {
+		confirmIndex := 0
+
+		for {
+			blockHeight := bw.bitcoinClient.GetBlockCount()
+			log.Debug("Check block count", "block_height", blockHeight)
+
+			var lastHeight int64
+			if bw.freshBlockList != nil {
+				lastHeight = bw.freshBlockList[len(bw.freshBlockList)-1].BlockInfo.Height
+			} else {
+				lastHeight = bw.scanConfirmHeight - 1
+			}
+
+			if blockHeight <= lastHeight {
+				time.Sleep(time.Duration(defaultInterval) * time.Second)
+				continue
+			}
+
+			for {
+				blockData := bw.bitcoinClient.GetBlockInfoByHeight(lastHeight + 1)
+				log.Debug("get block index", "index", lastHeight+1)
+
+				if blockData == nil {
+					break
+				}
+
+				if len(bw.freshBlockList) > 0 {
+					preHash := bw.freshBlockList[len(bw.freshBlockList)-1].BlockInfo.Hash
+					if blockData.BlockInfo.PreviousHash != preHash {
+						log.Info("hash not equal", "prehash", preHash, "newblockprehash", blockData.BlockInfo.PreviousHash)
+						bw.freshBlockList = bw.freshBlockList[:len(bw.freshBlockList)-1]
+						if len(bw.freshBlockList) < confirmIndex {
+							confirmIndex--
+						}
+						lastHeight--
+						continue
+					}
+				}
+
+				bw.freshBlockList = append(bw.freshBlockList, blockData)
+				if len(bw.freshBlockList)-confirmIndex >= int(bw.confirmNeedNum) {
+					bw.confirmBlockChan <- bw.freshBlockList[confirmIndex]
+					confirmIndex++
+				}
+
+				if int(blockData.BlockInfo.Confirmations) < int(bw.confirmNeedNum) {
+					bw.newUnconfirmBlockChan <- blockData
+				}
+
+				lastHeight = bw.freshBlockList[len(bw.freshBlockList)-1].BlockInfo.Height
+
+				if len(bw.freshBlockList) >= freshBlockLength {
+					bw.freshBlockList = bw.freshBlockList[1:]
+					confirmIndex--
+				}
+				log.Debug("freshBlockList len", "len", len(bw.freshBlockList))
+
+				if lastHeight >= blockHeight {
+					break
+				}
+			}
+		}
+	}()
+
+}
+
+//GetConfirmChan 获取已确认区块chan
+func (bw *BitCoinWatcher) GetConfirmChan() <-chan *BlockData {
+	return bw.confirmBlockChan
+}
+
+//GetNewTxChan 获取交易CHAN
+func (bw *BitCoinWatcher) GetNewTxChan() <-chan *wire.MsgTx {
+	return bw.newTxChan
+}
+
+//GetNewUnconfirmBlockChan 获取新未确认区块CHAN
+func (bw *BitCoinWatcher) GetNewUnconfirmBlockChan() <-chan *BlockData {
+	return bw.newUnconfirmBlockChan
+}
+

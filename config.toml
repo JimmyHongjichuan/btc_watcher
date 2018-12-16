@@ -22,3 +22,8 @@ bch_db_path = "/home/yaanhyy/ofgp_data/leveldb_data/bch_tx_db"
 ew_nonce_db_path = "/home/yaanhyy/ofgp_data/leveldb_data/ew_tx_db"
 eos_db_path = ""
 
+[DGW]
+bch_height = 1000000
+btc_height = 1000000
+eth_height = 10000000
+dbpath = "/home/yaanhyy/ofgp_data/leveldb_data/node0/dgateway"

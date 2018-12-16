@@ -2,16 +2,16 @@ package mortgagewatcher
 
 import (
 	"encoding/json"
+	"github.com/JimmyHongjichuan/btc_watcher/coinmanager"
+	"github.com/JimmyHongjichuan/btc_watcher/dbop"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	log "github.com/inconshreveable/log15"
-	"github.com/yaanhyy/btc_watcher/coinmanager"
 	"os"
-	"strings"
-	"time"
-
-	"github.com/yaanhyy/btc_watcher/dbop"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -163,46 +163,248 @@ func (m *MortgageWatcher) utxoMonitor() {
 		}
 	}()
 }
+//GetUtxoInfoByID 从leveldb中获取utxo信息
+func (m *MortgageWatcher) GetUtxoInfoByID(utxoID string) *coinmanager.UtxoInfo {
+	t, ok := m.faUtxoInfo.Load(utxoID)
+	if ok {
+		utxoInfo := t.(*coinmanager.UtxoInfo)
+		return utxoInfo
+	}
 
+	return nil
+}
+func (m *MortgageWatcher) storeUtxo(utxoID string) bool {
+	t, ok := m.faUtxoInfo.Load(utxoID)
+	if ok {
+		utxoInfo := t.(*coinmanager.UtxoInfo)
+		log.Debug("store utxo", "utxoID", utxoID, "utxo", utxoInfo)
+		data, err := json.Marshal(utxoInfo)
+		if err != nil {
+			log.Warn("Marshal utxo failed", "err", err.Error(), "coinType", m.coinType)
+			return false
+		}
+		key := strings.Join([]string{m.levelDbUtxoPreFix, utxoID}, "_")
+		retErr := m.levelDb.Put([]byte(key), []byte(data))
+		if retErr != nil {
+			log.Warn("Marshal utxo failed", "err", err.Error(), "coinType", m.coinType)
+			return false
+		}
+
+		return true
+	}
+
+	return false
+}
+
+//存储tx 签名前与签名后的交易hash映射
+func (m *MortgageWatcher) storeHashMapping(tx *wire.MsgTx) bool {
+	hashAfterSign := tx.TxHash().String()
+
+	copyTx := tx.Copy()
+	for _, vin := range copyTx.TxIn {
+		vin.SignatureScript = nil
+	}
+	hashBeforeSign := copyTx.TxHash().String()
+	mappingKey := strings.Join([]string{m.levelDbTxMappingPreFix, hashBeforeSign}, "_")
+	log.Debug("storeHashMap", "hash_before_sign", hashBeforeSign, "hash_after_sign", hashAfterSign, "coinType", m.coinType)
+
+	retErr := m.levelDb.Put([]byte(mappingKey), []byte(hashAfterSign))
+	if retErr != nil {
+		log.Warn("save hashmap failed", "err", retErr.Error(), "coinType", m.coinType)
+		return false
+	}
+
+	txKey := strings.Join([]string{m.levelDbTxPreFix, hashAfterSign}, "_")
+	retErr = m.levelDb.Put([]byte(txKey), []byte(hashAfterSign))
+	if retErr != nil {
+		log.Warn("save federation hash failed", "err", retErr.Error(), "coinType", m.coinType)
+		return false
+	}
+
+	return true
+}
+
+
+
+func (m *MortgageWatcher) processConfirmBlock(blockData *coinmanager.BlockData) {
+	for _, tx := range blockData.MsgBolck.Transactions {
+		txHash := tx.TxHash().String()
+
+		hasReturn := false
+		isFedAddr := false
+		isFromFedAddr := false
+		var value int64
+		var message *Message
+		var err error
+
+		//update utxo status
+
+		for _, vin := range tx.TxIn {
+			utxoID := strings.Join([]string{vin.PreviousOutPoint.Hash.String(), strconv.Itoa(int(vin.PreviousOutPoint.Index))}, "_")
+			utxoInfo := m.GetUtxoInfoByID(utxoID)
+			if utxoInfo != nil {
+				isFromFedAddr = true
+				utxoInfo.SpendType = 3
+				m.storeUtxo(utxoID)
+				m.faUtxoInfo.Delete(utxoID)
+
+			}
+
+		}
+
+		if isFromFedAddr {
+			m.storeHashMapping(tx)
+		}
+
+		for voutIndex, vout := range tx.TxOut {
+			address := coinmanager.ExtractPkScriptAddr(vout.PkScript, m.coinType)
+			if address != "" {
+				if _, ok := m.federationMap.Load(address); ok {
+					isFedAddr = true
+					value = vout.Value
+					utxoID := strings.Join([]string{txHash, strconv.Itoa(voutIndex)}, "_")
+
+					t, ok := m.faUtxoInfo.Load(utxoID)
+					if !ok {
+						newUtxo := coinmanager.UtxoInfo{
+							Address:     address,
+							Txid:        txHash,
+							Vout:        uint32(voutIndex),
+							Value:       vout.Value,
+							SpendType:   1,
+							BlockHeight: blockData.BlockInfo.Height,
+						}
+						m.faUtxoInfo.Store(utxoID, &newUtxo)
+					} else {
+						utxoInfo := t.(*coinmanager.UtxoInfo)
+						if utxoInfo.SpendType < 1 {
+							utxoInfo.SpendType = 1
+						}
+					}
+					m.storeUtxo(utxoID)
+
+					log.Debug("FIND NEW UTXO", "id", utxoID, "value", value, "coinType", m.coinType)
+
+				}
+			} else {
+				message, err = ParserPayLoadScript(vout.PkScript)
+				if err == nil {
+					hasReturn = true
+				}
+			}
+		}
+
+		// make mortgage tx
+		if isFedAddr && hasReturn {
+			mortgageTx := SubTransaction{
+				ScTxid:    tx.TxHash().String(),
+				Amount:    value,
+				From:      m.coinType,
+				To:        message.ChainName,
+				TokenFrom: 0,
+				TokenTo:   message.APPNumber,
+				RechargeList: []*AddressInfo{
+					{
+						Address: message.Address,
+						Amount:  value,
+					},
+				},
+			}
+
+			log.Debug("push mortgage tx", "tx", mortgageTx, "coinType", m.coinType)
+			m.mortgageTxChan <- &mortgageTx
+		}
+	}
+
+}
+
+func (m *MortgageWatcher) processNewTx(newTx *wire.MsgTx) {
+	txHash := newTx.TxHash().String()
+	//update utxo status
+	isFromFedAddr := false
+
+	for _, vin := range newTx.TxIn {
+		utxoID := strings.Join([]string{vin.PreviousOutPoint.Hash.String(), strconv.Itoa(int(vin.PreviousOutPoint.Index))}, "_")
+		utxoInfo := m.GetUtxoInfoByID(utxoID)
+		if utxoInfo != nil {
+			isFromFedAddr = true
+			utxoInfo.SpendType = 2
+			m.storeUtxo(utxoID)
+		}
+	}
+
+	for voutIndex, vout := range newTx.TxOut {
+		address := coinmanager.ExtractPkScriptAddr(vout.PkScript, m.coinType)
+		if address != "" {
+			if _, ok := m.federationMap.Load(address); ok {
+				id := strings.Join([]string{txHash, strconv.Itoa(voutIndex)}, "_")
+				newUtxo := coinmanager.UtxoInfo{
+					Address:   address,
+					Txid:      txHash,
+					Vout:      uint32(voutIndex),
+					Value:     vout.Value,
+					SpendType: 0,
+				}
+
+				_, ok := m.faUtxoInfo.Load(id)
+				if !ok {
+					m.faUtxoInfo.Store(id, &newUtxo)
+					m.storeUtxo(id)
+				}
+			}
+		}
+	}
+
+	if isFromFedAddr {
+		log.Info("process tx", "tx_hash", txHash, "coinType", m.coinType)
+		m.storeHashMapping(newTx)
+	}
+}
+
+func (m *MortgageWatcher) processNewUnconfirmBlock(blockData *coinmanager.BlockData) {
+	for _, tx := range blockData.MsgBolck.Transactions {
+		m.processNewTx(tx)
+	}
+}
 //StartWatch 启动监听已确认和未确认的区块以及新交易，提取抵押交易
 func (m *MortgageWatcher) StartWatch() {
 	m.utxoMonitor()
-	//
-	//	m.bwClient.WatchNewTxFromNodeMempool()
-	//	m.bwClient.WatchNewBlock()
-	//
-	//	confirmBlockChan := m.bwClient.GetConfirmChan()
-	//	newTxChan := m.bwClient.GetNewTxChan()
-	//	newUnconfirmBlockChan := m.bwClient.GetNewUnconfirmBlockChan()
-	//
-	//	go func() {
-	//		for {
-	//			select {
-	//			case newConfirmBlock := <-confirmBlockChan:
-	//				log.Info("process confirm block height:", "height", newConfirmBlock.BlockInfo.Height, "coinType", m.coinType)
-	//				m.processConfirmBlock(newConfirmBlock)
-	//				if newConfirmBlock.BlockInfo.Height < m.scanConfirmHeight {
-	//					//发生回退
-	//					log.Info("confirm block height roll back", "height", newConfirmBlock.BlockInfo.Height, "coinType", m.coinType)
-	//					m.checkUtxo(newConfirmBlock.BlockInfo.Height)
-	//				}
-	//				m.scanConfirmHeight = newConfirmBlock.BlockInfo.Height + 1
-	//
-	//				height := strconv.Itoa(int(m.scanConfirmHeight))
-	//				err := m.levelDb.Put([]byte(confirmHeightLDKey), []byte(height))
-	//				if err != nil {
-	//					log.Error("Save confirmHeight Failed", "err", err.Error(), "height", height)
-	//				}
-	//
-	//			case newTx := <-newTxChan:
-	//				m.processNewTx(newTx)
-	//			case newUnconfirmBlock := <-newUnconfirmBlockChan:
-	//				log.Info("process new block height:", "height", newUnconfirmBlock.BlockInfo.Height, "coinType", m.coinType)
-	//				m.processNewUnconfirmBlock(newUnconfirmBlock)
-	//			}
-	//		}
-	//	}()
-	//
+
+	m.bwClient.WatchNewTxFromNodeMempool()
+	m.bwClient.WatchNewBlock()
+
+	confirmBlockChan := m.bwClient.GetConfirmChan()
+	newTxChan := m.bwClient.GetNewTxChan()
+	newUnconfirmBlockChan := m.bwClient.GetNewUnconfirmBlockChan()
+
+	go func() {
+		for {
+			select {
+			case newConfirmBlock := <-confirmBlockChan:
+				log.Info("process confirm block height:", "height", newConfirmBlock.BlockInfo.Height, "coinType", m.coinType)
+				m.processConfirmBlock(newConfirmBlock)
+				if newConfirmBlock.BlockInfo.Height < m.scanConfirmHeight {
+					//发生回退
+					log.Info("confirm block height roll back", "height", newConfirmBlock.BlockInfo.Height, "coinType", m.coinType)
+					//m.checkUtxo(newConfirmBlock.BlockInfo.Height)
+				}
+				m.scanConfirmHeight = newConfirmBlock.BlockInfo.Height + 1
+
+				height := strconv.Itoa(int(m.scanConfirmHeight))
+				err := m.levelDb.Put([]byte(confirmHeightLDKey), []byte(height))
+				if err != nil {
+					log.Error("Save confirmHeight Failed", "err", err.Error(), "height", height)
+				}
+
+			case newTx := <-newTxChan:
+				m.processNewTx(newTx)
+			case newUnconfirmBlock := <-newUnconfirmBlockChan:
+				log.Info("process new block height:", "height", newUnconfirmBlock.BlockInfo.Height, "coinType", m.coinType)
+				m.processNewUnconfirmBlock(newUnconfirmBlock)
+			}
+		}
+	}()
+
 }
 
 //loadUtxoFromLevelDb 从leveldb中，load utxo进内存

@@ -1,18 +1,15 @@
-package dbop
+package dgwdb
 
 import (
 	"github.com/btcsuite/goleveldb/leveldb"
 	"github.com/btcsuite/goleveldb/leveldb/errors"
 	"github.com/btcsuite/goleveldb/leveldb/filter"
-	"github.com/btcsuite/goleveldb/leveldb/iterator"
 	"github.com/btcsuite/goleveldb/leveldb/opt"
-	"github.com/btcsuite/goleveldb/leveldb/util"
 	"github.com/inconshreveable/log15"
 
 	"sync"
 )
 
-//LDBDatabase leveldb操作类
 type LDBDatabase struct {
 	filename string
 	db       *leveldb.DB
@@ -22,8 +19,6 @@ type LDBDatabase struct {
 }
 
 
-
-//NewLDBDatabase 新建一个LEVELDB实例
 func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 	//logger := log.New()
 
@@ -53,23 +48,3 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 		db:       db,
 	}, nil
 }
-
-//NewIteratorWithPrefix 根据前缀返回iter
-func (db *LDBDatabase) NewIteratorWithPrefix(prefix []byte) iterator.Iterator {
-	return db.db.NewIterator(util.BytesPrefix(prefix), nil)
-}
-
-//Get 查询KEY的VALUE
-func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
-	data, err := db.db.Get(key, nil)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-//Put 存储KEV VALUE
-func (db *LDBDatabase) Put(key []byte, value []byte) error {
-	return db.db.Put(key, value, nil)
-}
-
