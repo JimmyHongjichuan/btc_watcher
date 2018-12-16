@@ -130,4 +130,5 @@ func main() {
 		}
 	}
 	btcWatcher.StartWatch()
+	defer func() { select {} }()
 }
