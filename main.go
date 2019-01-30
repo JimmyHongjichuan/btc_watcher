@@ -1,125 +1,133 @@
 package main
 
 import (
-	"bytes"
-	"encoding/hex"
 	"fmt"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"log"
 
-	"github.com/JimmyHongjichuan/btc_watcher/primitives"
-	//"primitives"
+	"github.com/JimmyHongjichuan/btc_watcher/log"
+	"github.com/JimmyHongjichuan/btc_watcher/mortgagewatcher"
+	"github.com/JimmyHongjichuan/btc_watcher/util"
+
+	"github.com/ofgp/ofgp-core/cluster"
+
+	"github.com/JimmyHongjichuan/btc_watcher/dgwdb"
+	"github.com/spf13/viper"
+	"io/ioutil"
+	"os"
+
+	"path"
 )
+var (
+	nodeLogger        = log.New(viper.GetString("loglevel"), "node")
+)
+func init() {
+	homeDir, _ := util.GetHomeDir()
+	dbPath := path.Join(homeDir, "btc_db")
+	viper.SetDefault("LEVELDB.btc_db_path", dbPath)
+	dbPath = path.Join(homeDir, "bch_db")
+	viper.SetDefault("LEVELDB.bch_db_path", dbPath)
+	viper.SetDefault("BTC.load_mode", "leveldb")
+	viper.SetDefault("BCH.load_mode", "leveldb")
 
-
-func getInputAddress(){
-	chainParams :=  &chaincfg.MainNetParams;
-	PubKey , err := hex.DecodeString("03fcad68904be57b0a8133293ef4c3f49218df2da8886ed1257bc9f7e7d5a70e28")
-	if err != nil {
-		panic(err)
-	}
-	addressPubKey, err := btcutil.NewAddressPubKey(PubKey, chainParams)
-	if err != nil {
-		log.Fatal(err)
-	}
-	address := addressPubKey.EncodeAddress()
-	fmt.Println (address)
 }
-func genTx() {
-	privWif := "cS5LWK2aUKgP9LmvViG3m9HkfwjaEJpGVbrFHuGZKvW2ae3W9aUe"
-	txHash := "12e0d25258ec29fadf75a3f569fccaeeb8ca4af5d2d34e9a48ab5a6fdc0efc1e"
-	destination := "mrdKfqWEkwferzEQus5NpgK2Dtpq7Qcgif"
-	amount := int64(11650795)
-	txFee := int64(500000)
-	sourceUTXOIndex := uint32(1)
-	chainParams := &chaincfg.TestNet3Params
 
-	decodedWif, err := btcutil.DecodeWIF(privWif)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("Decoded WIF: %v\n", decodedWif) // Decoded WIF: cS5LWK2aUKgP9LmvViG3m9HkfwjaEJpGVbrFHuGZKvW2ae3W9aUe
-
-	addressPubKey, err := btcutil.NewAddressPubKey(decodedWif.PrivKey.PubKey().SerializeUncompressed(), chainParams)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	sourceUTXOHash, err := chainhash.NewHashFromStr(txHash)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("UTXO hash: %s\n", sourceUTXOHash) // utxo hash: 12e0d25258ec29fadf75a3f569fccaeeb8ca4af5d2d34e9a48ab5a6fdc0efc1e
-
-	sourceUTXO := wire.NewOutPoint(sourceUTXOHash, sourceUTXOIndex)
-	sourceTxIn := wire.NewTxIn(sourceUTXO, nil, nil)
-	destinationAddress, err := btcutil.DecodeAddress(destination, chainParams)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	sourceAddress, err := btcutil.DecodeAddress(addressPubKey.EncodeAddress(), chainParams)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("Source Address: %s\n", sourceAddress) // Source Address: mgjHgKi1g6qLFBM1gQwuMjjVBGMJdrs9pP
-
-	destinationPkScript, err := txscript.PayToAddrScript(destinationAddress)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	sourcePkScript, err := txscript.PayToAddrScript(sourceAddress)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	sourceTxOut := wire.NewTxOut(amount, sourcePkScript)
-
-	redeemTx := wire.NewMsgTx(wire.TxVersion)
-	redeemTx.AddTxIn(sourceTxIn)
-	redeemTxOut := wire.NewTxOut((amount - txFee), destinationPkScript)
-	redeemTx.AddTxOut(redeemTxOut)
-
-	sigScript, err := txscript.SignatureScript(redeemTx, 0, sourceTxOut.PkScript, txscript.SigHashAll, decodedWif.PrivKey, false)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	redeemTx.TxIn[0].SignatureScript = sigScript
-	fmt.Printf("Signature Script: %v\n", hex.EncodeToString(sigScript)) // Signature Script: 473...b67
-
-	// validate signature
-	flags := txscript.StandardVerifyFlags
-	vm, err := txscript.NewEngine(sourceTxOut.PkScript, redeemTx, 0, flags, nil, nil, amount)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if err := vm.Execute(); err != nil {
-		log.Fatal(err)
-	}
-
-	buf := bytes.NewBuffer(make([]byte, 0, redeemTx.SerializeSize()))
-	redeemTx.Serialize(buf)
-
-	fmt.Printf("Redeem Tx: %v\n", hex.EncodeToString(buf.Bytes())) // redeem Tx: 01000000011efc...5bb88ac00000000
+// MultiSigInfo 多签信息
+type MultiSigInfo struct {
+	BtcAddress      string `json:"btc_address"`
+	BtcRedeemScript []byte `json:"btc_redeem_script"`
+	BchAddress      string `json:"bch_address"`
+	BchRedeemScript []byte `json:"bch_redeem_script"`
 }
+
+var defaultUtxoLockTime = 60
+
+func openDbOrDie(dbPath string) (db *dgwdb.LDBDatabase, newlyCreated bool) {
+	if len(dbPath) == 0 {
+		homeDir, err := util.GetHomeDir()
+		if err != nil {
+			panic("Cannot detect the home dir for the current user.")
+		}
+		dbPath = path.Join(homeDir, "braftdb")
+	}
+
+	fmt.Println("open db path ", dbPath)
+	info, err := os.Stat(dbPath)
+	if os.IsNotExist(err) {
+		if err := os.Mkdir(dbPath, 0700); err != nil {
+			panic(fmt.Errorf("Cannot create db path %v", dbPath))
+		}
+		newlyCreated = true
+	} else {
+		if err != nil {
+			panic(fmt.Errorf("Cannot get info of %v", dbPath))
+		}
+		if !info.IsDir() {
+			panic(fmt.Errorf("Datavse path (%v) is not a directory", dbPath))
+		}
+		if c, _ := ioutil.ReadDir(dbPath); len(c) == 0 {
+			newlyCreated = true
+		} else {
+			newlyCreated = false
+		}
+	}
+
+	db, err = dgwdb.NewLDBDatabase(dbPath, cluster.DbCache, cluster.DbFileHandles)
+	if err != nil {
+		panic(fmt.Errorf("Failed to open database at %v", dbPath))
+	}
+	return
+}
+
+//func initWatchHeight(db *dgwdb.LDBDatabase) {
+//	height := primitives.GetCurrentHeight(db, "bch")
+//	if height > 0 {
+//		viper.Set("DGW.bch_height", height)
+//	}
+//	height = primitives.GetCurrentHeight(db, "eth")
+//	if height > 0 {
+//		viper.Set("DGW.eth_height", height)
+//	}
+//}
 
 func main() {
-	//address, err := primitives.BitCoinHashToAddress("9d3e745da6c1e85960f8a72fc57d0e9c41287d39", primitives.P2SH)
-	address, err := primitives.BitCoinHashToAddress("78c0c1bd8bf13af60f4b0371c2f5f9353de777c9", primitives.P2PKH)
+	configFile := "./config.toml"
+	viper.SetConfigFile(configFile)
+	viper.ReadInConfig()
 
-	if err != nil {
-		panic(err)
+	/*
+	db, newlyCreated := openDbOrDie(viper.GetString("DGW.dbpath"))
+	if newlyCreated {
+		nodeLogger.Debug("initializing new db")
+		primitives.InitDB(db, primitives.GenesisBlockPack)
 	}
-	fmt.Println("BITCOIN ADDRESS: ", address)
-	getInputAddress()
+	*/
+	//initWatchHeight(db)
+	viper.Set("DGW.bch_height", 100);
+	// bchFederationAddress, bchRedeem, btcFederationAddress, btcRedeem := getFederationAddress()
+	multiSig := new(MultiSigInfo)
+	multiSig.BtcAddress = viper.GetString("BTC.btc_multisig")
+	multiSig.BtcRedeemScript = []byte(viper.GetString("BTC.btc_redeem_script"))
+	fmt.Sprintf("get multisig address", "btc", multiSig.BtcAddress, "bch", multiSig.BchAddress)
+
+	utxoLockTime := viper.GetInt("DGW.utxo_lock_time")
+	if utxoLockTime == 0 {
+		utxoLockTime = defaultUtxoLockTime
+	}
+
+	var (
+		btcWatcher *mortgagewatcher.MortgageWatcher
+		//bchWatcher *btcwatcher.MortgageWatcher
+		//ethWatcher *ew.Client
+		//xinWatcher *eoswatcher.EOSWatcher
+		//eosWatcher *eoswatcher.EOSWatcherMain
+		err error
+	)
+
+	if len(viper.GetString("BTC.rpc_server")) > 0 {
+		btcWatcher, err = mortgagewatcher.NewMortgageWatcher("btc", viper.GetInt64("DGW.btc_height"),
+			multiSig.BtcAddress, multiSig.BtcRedeemScript, utxoLockTime)
+		if err != nil {
+			panic(fmt.Sprintf("new btc watcher failed, err: %v", err))
+		}
+	}
+	btcWatcher.StartWatch()
 }
