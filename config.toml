@@ -1,25 +1,26 @@
 net_param = "regtest"
-
+# 日志级别，分别是debug, info, warn, error, critical
+loglevel = "debug"
 [BTC]
-rpc_server = "127.0.0.1:8331"
-rpc_user = "test"
-rpc_password = "test"
+rpc_server = "172.18.11.52:18333"
+rpc_user = "kek"
+rpc_password = "kek"
 confirm_block_num = 6
 coinbase_confirm_block_num = 100
 btc_multisig="2NCmZGXVWaC3NeWj3CYRPJUNrptNXmAZ77L"
 btc_redeem_script="52210281f14002f0c81c7630d1c83a2439469ce09abf3a5e2a976ff226a2c7d698ec1921030b4bbfeca237a4bab81a3adeef76cc1cbcfa5e7cac5c22754e47ba42e1fe9579210294ed2be8477284415db68029d19dbed2fc518aa6bb5002a025ed276519e8ef0d53ae"
 [BCH]
-rpc_server = "127.0.0.1:8333"
-rpc_user = "test"
-rpc_password = "test"
+rpc_server = "172.18.11.52:18335"
+rpc_user = "kek"
+rpc_password = "kek"
 confirm_block_num = 6
 coinbase_confirm_block_num = 100
 
 
 [LEVELDB]
-btc_db_path = "/home/yaanhyy/ofgp_data/leveldb_data/btc_tx_db"
-bch_db_path = "/home/yaanhyy/ofgp_data/leveldb_data/bch_tx_db"
-ew_nonce_db_path = "/home/yaanhyy/ofgp_data/leveldb_data/ew_tx_db"
+btc_db_path = "/Users/hongyuanyang/leveldb_data/btc_tx_db"
+bch_db_path = "/Users/hongyuanyang/leveldb_data/bch_tx_db"
+ew_nonce_db_path = "/Users/hongyuanyang/leveldb_data/ew_tx_db"
 eos_db_path = ""
 
 [DGW]

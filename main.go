@@ -13,7 +13,8 @@ import (
 	"github.com/spf13/viper"
 	"io/ioutil"
 	"os"
-
+	"os/signal"
+	"syscall"
 	"path"
 )
 var (
@@ -117,7 +118,7 @@ func main() {
 		btcWatcher *mortgagewatcher.MortgageWatcher
 		//bchWatcher *btcwatcher.MortgageWatcher
 		//ethWatcher *ew.Client
-		//xinWatcher *eoswatcher.EOSWatcher
+		//xinWatcher *eoswatcher.EOSWatcher6
 		//eosWatcher *eoswatcher.EOSWatcherMain
 		err error
 	)
@@ -130,4 +131,8 @@ func main() {
 		}
 	}
 	btcWatcher.StartWatch()
+	sigChan := make(chan os.Signal)
+	signal.Notify(sigChan, syscall.SIGINT)
+	sig := <-sigChan
+	fmt.Printf("receive signal %v\n", sig)
 }

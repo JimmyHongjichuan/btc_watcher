@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 	"github.com/spf13/viper"
 )
 
@@ -368,6 +367,7 @@ func (m *MortgageWatcher) processNewUnconfirmBlock(blockData *coinmanager.BlockD
 }
 //StartWatch 启动监听已确认和未确认的区块以及新交易，提取抵押交易
 func (m *MortgageWatcher) StartWatch() {
+
 	m.utxoMonitor()
 
 	m.bwClient.WatchNewTxFromNodeMempool()

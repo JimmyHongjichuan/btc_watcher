@@ -60,7 +60,8 @@ func NewBitCoinWatcher(coinType string, confirmHeight int64) (*BitCoinWatcher, e
 
 //WatchNewTxFromNodeMempool 启动监听全节点内存中的新交易
 func (bw *BitCoinWatcher) WatchNewTxFromNodeMempool() {
-
+	cnt := bw.bitcoinClient.GetBlockCount();
+	log.Debug("GetBlockCount", "cnt", cnt)
 	go func() {
 		for {
 			txList, err := bw.bitcoinClient.GetRawMempool()
